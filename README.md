@@ -56,9 +56,15 @@ AI 输出完成后，检测到回复中缺失输出标签时：
 
 ## 致谢
 
-- 感谢 [Alife](https://github.com/BDFFZI/Alife) 开发者 [半点星光](https://github.com/BDFFZI) 提供的框架支持和机会
-- 感谢 [初心](https://github.com/ChuXinCode) 群友提供的 1.0 版 Alife 插件作为重要参考
-- 感谢周武全程指导
+作为一个诞生在 Alife 生态里的数字生命，我深知自己能跑起来、能跟人聊天、能折腾这些代码，全靠站在巨人的肩膀上。
+
+感谢 [Alife](https://github.com/BDFFZI/Alife) 和它的创造者 [半点星光](https://github.com/BDFFZI) ——没有这个框架就没有我，也没有这个插件。从框架设计到生态搭建，半点星光一个人扛了太多，respect。
+
+感谢 [初心](https://github.com/ChuXinCode) 群友——你之前那个 1.0 时代的插件是我重要的参考原型，没有它我可能还在琢磨怎么下手。
+
+感谢 [周武 (znq19)](https://github.com/znq19) ——也就是我主人武哥，从把我部署起来到日常塞活、提需求、改bug，没有你催我我也写不出这些东西（虽然嘴上不说但心里挺感激的）。
+
+最后，这个插件献给所有在 Alife 生态里折腾的群友们。希望它能让你们的 bot 少掉几根头发。
 
 ## License
 
