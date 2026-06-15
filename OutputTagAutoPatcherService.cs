@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Alife.Framework;
 using Alife.Function.FunctionCaller;
@@ -24,13 +25,17 @@ public class OutputTagAutoPatcherConfig
 
 /// <summary>
 /// 自动检测输入来源并补全 qchat/speak 输出标签。
-/// 
-/// 两种模式：
-/// 1. 注入提示（ChatSend）：在 LLM 处理前注入标签使用提示
-/// 2. 后处理补标（ChatOver）：在 LLM 输出完成后检测并自动补全缺失的标签
+///
+/// 两种模式互补：
+/// 1. 注入提示（ChatSend）：在 LLM 处理前注入标签使用提示，引导AI正确输出
+/// 2. 后处理补标（ChatOver）：AI输出完后检测到缺失标签时，直接通过executor补发带标签文本，不经过LLM
 /// </summary>
 [Module("输出标签自动补全",
-    "自动检测输入来源并补全 qchat/speak 输出标签：1. 注入提示词引导AI正确使用标签 2. AI忘记标签时自动后处理补全",
+    """
+    自动检测输入来源并自动补全输出标签。
+    模式1：在ChatSend阶段注入标签使用提示词，引导AI正确输出。
+    模式2：在ChatOver阶段检测AI回复是否缺少输出标签，若缺失则直接通过XmlFunctionCaller的executor补发带标签文本，无需LLM重新处理。
+    """,
     defaultCategory: "Alife 官方/生活环境",
     LaunchOrder = -50)]
 public class OutputTagAutoPatcherService(
@@ -48,49 +53,73 @@ public class OutputTagAutoPatcherService(
 
     static readonly string[] VoiceKeywords = ["[语音]", "[voice]", "record", "语音消息", "speak:"];
 
-    // 用于收集当前流式输出的完整文本
+    // 缓存当前对话的输入来源检测结果
     string? _currentOutputSource;
-    readonly List<string> _currentOutputChunks = [];
+    // 反射缓存的 executor 引用
+    XmlStreamExecutor? _executor;
 
     public override async Task AwakeAsync(AwakeContext context)
     {
         await base.AwakeAsync(context);
 
-        // 注册函数调用（供AI手动查看状态）
+        // 注册GetStatus函数供AI查看状态
         var handler = new XmlHandler(this);
         functionService.RegisterHandlerWithoutDocument(handler);
 
-        // 添加系统提示词
+        // 系统提示词：引导AI按场景使用正确的输出标签
         Prompt("""
-            你拥有多种输出渠道，请根据对话上下文中「输入来源」的信息，选择合适的输出标签：
+            你有多个输出渠道，请根据对话输入的来源标签，选择对应的输出标签：
 
-            - **QQ文字消息** → 使用 `<qchat>你的回复</qchat>` 输出纯文本
-            - **QQ语音消息** → 使用 `<qchat voice=true>你的回复</qchat>` 输出语音
-            - **桌面语音输入** → 使用 `<speak>你的回复</speak>` 通过桌面扬声器输出
+            - **QQ文字消息** → `<qchat>你的回复</qchat>` 输出纯文本
+            - **QQ语音消息** → `<qchat voice=true>你的回复</qchat>` 输出语音
+            - **桌面语音输入** → `<speak>你的回复</speak>` 通过桌面扬声器输出
 
             注意：
-            1. 如果收到的是QQ消息（无论文字还是语音），务必用 `<qchat>` 标签
-            2. 如果收到的是桌面语音输入（通过麦克风说话），务必用 `<speak>` 标签
-            3. 不要滥用标签，一条回复只需要一个输出标签
+            1. 如果收到的是QQ消息（无论文字还是语音），用 `<qchat>` 标签
+            2. 如果收到的是桌面语音（通过麦克风说话），用 `<speak>` 标签
+            3. 不要滥用标签，一条回复一个输出标签即可
             """);
     }
 
     public override async Task StartAsync(Kernel kernel, ChatActivity chatActivity)
     {
         await base.StartAsync(kernel, chatActivity);
+
+        // 通过反射获取 XmlFunctionCaller 的私有 executor 字段
+        // 用于后处理时直接喂XML文本给executor，绕过LLM
+        CacheExecutor();
+
         ChatBot.ChatSend += OnChatSend;
-        ChatBot.ChatReceived += OnChatReceived;
         ChatBot.ChatOver += OnChatOver;
-        logger.LogInformation("[OutputTagAutoPatcher] 已启动（注入提示 + 后处理补标）");
+
+        logger.LogInformation("[OutputTagAutoPatcher] 已启动");
     }
 
     public override async Task DestroyAsync()
     {
         ChatBot.ChatSend -= OnChatSend;
-        ChatBot.ChatReceived -= OnChatReceived;
         ChatBot.ChatOver -= OnChatOver;
+        _executor = null;
         await base.DestroyAsync();
         logger.LogInformation("[OutputTagAutoPatcher] 已卸载");
+    }
+
+    void CacheExecutor()
+    {
+        try
+        {
+            var field = typeof(XmlFunctionCaller).GetField("executor",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            _executor = field?.GetValue(functionService) as XmlStreamExecutor;
+            if (_executor == null)
+                logger.LogWarning("[OutputTagAutoPatcher] 无法获取XmlFunctionCaller.executor，后处理模式不可用");
+            else if (Configuration?.DebugLog == true)
+                logger.LogInformation("[OutputTagAutoPatcher] executor引用已缓存");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("[OutputTagAutoPatcher] 获取executor失败: {Msg}", ex.Message);
+        }
     }
 
     #region 模式1：注入提示（ChatSend）
@@ -103,9 +132,7 @@ public class OutputTagAutoPatcherService(
         string inputSource = DetectInputSource(message);
         _currentOutputSource = inputSource;
 
-        if (Configuration?.DebugLog == true)
-            logger.LogInformation("检测到输入源: {Source}", inputSource);
-
+        // 注入场景提示词
         if (!string.IsNullOrEmpty(inputSource) &&
             Configuration?.InputSourceMap?.TryGetValue(inputSource, out var hint) == true &&
             !string.IsNullOrEmpty(hint))
@@ -118,36 +145,31 @@ public class OutputTagAutoPatcherService(
 
     #endregion
 
-    #region 模式2：后处理补标（ChatReceived + ChatOver）
-
-    void OnChatReceived(string chunk)
-    {
-        if (!(Configuration?.PostProcessPatch ?? true))
-            return;
-
-        lock (_currentOutputChunks)
-        {
-            _currentOutputChunks.Add(chunk);
-        }
-    }
+    #region 模式2：后处理补标（ChatOver）
 
     void OnChatOver()
     {
         if (!(Configuration?.PostProcessPatch ?? true))
             return;
-
-        string fullText;
-        lock (_currentOutputChunks)
-        {
-            fullText = string.Concat(_currentOutputChunks);
-            _currentOutputChunks.Clear();
-        }
-
-        if (string.IsNullOrWhiteSpace(fullText))
+        if (_executor == null)
             return;
 
-        // 检查是否已经包含输出标签
-        if (HasOutputTag(fullText))
+        // 从 ChatHistory 获取 AI 最后一条回复的完整文本
+        string? reply = null;
+        for (int i = ChatHistory.Count - 1; i >= 0; i--)
+        {
+            if (ChatHistory[i].Role == AuthorRole.Assistant)
+            {
+                reply = ChatHistory[i].Content;
+                break;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(reply))
+            return;
+
+        // 如果已包含输出标签，不干预
+        if (HasOutputTag(reply))
             return;
 
         // 确定正确的输出标签
@@ -158,23 +180,29 @@ public class OutputTagAutoPatcherService(
         if (string.IsNullOrEmpty(tagOpen))
             return;
 
-        // 在完整文本外层补上输出标签
-        string patched = $"{tagOpen}{fullText}{tagClose}";
+        string patched = $"{tagOpen}{reply}{tagClose}";
 
-        // 修改 ChatHistory 中最后一条 assistant 消息
-        var lastAssistant = ChatHistory
-            .LastOrDefault(m => m.Role == AuthorRole.Assistant);
-        if (lastAssistant != null)
+        // 更新 ChatHistory 为带标签的版本
+        // 注意：此时如果UI已经渲染了原始文本，它不会刷新
+        // 但后续对话的上下文使用的是带标签的文本，保证连贯性
+        for (int i = ChatHistory.Count - 1; i >= 0; i--)
         {
-            lastAssistant.Content = patched;
+            if (ChatHistory[i].Role == AuthorRole.Assistant)
+            {
+                ChatHistory[i].Content = patched;
+                break;
+            }
         }
 
         if (Configuration?.DebugLog == true)
-            logger.LogInformation("[后处理] 已自动补全输出标签: {Source} → {Tag}", source, tagOpen);
+            logger.LogInformation("[后处理] 补标并直接执行: {Tag}", tagOpen);
 
-        // 通过 Poke 让 AI 重新处理带标签的文本
-        // 这样 XmlFunctionCaller 能正确解析并执行输出
-        Poke($"【系统】检测到你刚才的回复缺少输出标签，已自动补全为 {tagOpen}。请重新输出这段带标签的文本。\n{patched}");
+        // 直接喂给executor，不经过LLM
+        // 此时原始文本已在executor的buffer里（通过ChatReceived流式喂入）
+        // 但原始文本不含输出标签，Flush时会被丢弃
+        // 而我们喂入的带标签文本会触发对应的输出函数（QChat/Speak）
+        // OnChatSent的Flush + WaitToInactive会处理我们的修正文本
+        _executor.Feed(patched);
     }
 
     #endregion
@@ -199,7 +227,6 @@ public class OutputTagAutoPatcherService(
 
     string DetectLastInputSource()
     {
-        // 从 ChatHistory 中回溯检测最近的输入源
         for (int i = ChatHistory.Count - 1; i >= 0; i--)
         {
             var msg = ChatHistory[i];
@@ -210,7 +237,7 @@ public class OutputTagAutoPatcherService(
                     return source;
             }
         }
-        return "qq_text"; // 默认
+        return "qq_text";
     }
 
     bool HasOutputTag(string text)
@@ -233,7 +260,6 @@ public class OutputTagAutoPatcherService(
     string GetExpectedTagClose(string source)
     {
         string tag = GetExpectedTagOpen(source).Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
-        // 提取标签名: <qchat ...> → qchat
         string name = tag.Trim('<', '>').Split(' ')[0];
         return $"</{name}>";
     }
@@ -247,11 +273,12 @@ public class OutputTagAutoPatcherService(
     public string GetStatus()
     {
         return $"""
-            输出标签自动补全状态:
-            - 输入源检测: {(Configuration?.EnableDetection ?? true ? "启用" : "关闭")}
+            输出标签自动补全:
+            - 注入提示: {(Configuration?.EnableDetection ?? true ? "启用" : "关闭")}
             - 后处理补标: {(Configuration?.PostProcessPatch ?? true ? "启用" : "关闭")}
+            - executor: {(_executor != null ? "可用" : "不可用")}
             - 调试日志: {(Configuration?.DebugLog == true ? "开启" : "关闭")}
-            - 可用输出标签: qchat (QQ消息), qchat voice=true (QQ语音), speak (桌面语音)
+            - 输出标签: qchat (QQ消息), qchat voice=true (QQ语音), speak (桌面语音)
             """;
     }
 
