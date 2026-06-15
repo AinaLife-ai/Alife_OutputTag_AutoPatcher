@@ -1,6 +1,6 @@
-// 原作者：银月 (QQ: 2141951927)
-// 由爱奈丽维护更新至 Alife 插件市场
-// 感谢银月提供的原始实现思路与代码
+// 贡献者：银月 (QQ: 2141951927)
+// 修复了后处理补标时缺少 type/targetId 参数的问题
+// 以及爱奈丽版本中的诸多细节优化
 
 using System;
 using System.Collections.Generic;
@@ -45,7 +45,7 @@ public class OutputTagAutoPatcherConfig
     模式1：在ChatSend阶段注入标签使用提示词，引导AI正确输出。
     模式2：在ChatOver阶段检测AI回复是否缺少输出标签，若缺失则直接通过XmlFunctionCaller的executor补发带标签文本，无需LLM重新处理。
     """,
-    defaultCategory: "用户自制/标签补全",
+    defaultCategory: "用户自制/输出标签",
     LaunchOrder = -50)]
 public class OutputTagAutoPatcherService(
     XmlFunctionCaller functionService,
@@ -62,16 +62,20 @@ public class OutputTagAutoPatcherService(
 
     static readonly string[] VoiceKeywords = ["[语音]", "[voice]", "record", "语音消息", "speak:"];
 
+    // 缓存当前对话的输入来源检测结果
     string? _currentOutputSource;
+    // 反射缓存的 executor 引用
     XmlStreamExecutor? _executor;
 
     public override async Task AwakeAsync(AwakeContext context)
     {
         await base.AwakeAsync(context);
 
+        // 注册GetStatus函数供AI查看状态
         var handler = new XmlHandler(this);
         functionService.RegisterHandlerWithoutDocument(handler);
 
+        // 系统提示词：引导AI按场景使用正确的输出标签
         Prompt("""
             你有多个输出渠道，请根据对话输入的来源标签，选择对应的输出标签：
 
@@ -90,6 +94,8 @@ public class OutputTagAutoPatcherService(
     {
         await base.StartAsync(kernel, chatActivity);
 
+        // 通过反射获取 XmlFunctionCaller 的私有 executor 字段
+        // 用于后处理时直接喂XML文本给executor，绕过LLM
         CacheExecutor();
 
         ChatBot.ChatSend += OnChatSend;
@@ -125,6 +131,8 @@ public class OutputTagAutoPatcherService(
         }
     }
 
+    #region 模式1：注入提示（ChatSend）
+
     string OnChatSend(string message)
     {
         if (!(Configuration?.EnableDetection ?? true))
@@ -133,6 +141,7 @@ public class OutputTagAutoPatcherService(
         string inputSource = DetectInputSource(message);
         _currentOutputSource = inputSource;
 
+        // 注入场景提示词
         if (!string.IsNullOrEmpty(inputSource) &&
             Configuration?.InputSourceMap?.TryGetValue(inputSource, out var hint) == true &&
             !string.IsNullOrEmpty(hint))
@@ -143,6 +152,10 @@ public class OutputTagAutoPatcherService(
         return message;
     }
 
+    #endregion
+
+    #region 模式2：后处理补标（ChatOver）
+
     void OnChatOver()
     {
         if (!(Configuration?.PostProcessPatch ?? true))
@@ -150,6 +163,7 @@ public class OutputTagAutoPatcherService(
         if (_executor == null)
             return;
 
+        // 从 ChatHistory 获取 AI 最后一条回复的完整文本
         string? reply = null;
         for (int i = ChatHistory.Count - 1; i >= 0; i--)
         {
@@ -163,18 +177,46 @@ public class OutputTagAutoPatcherService(
         if (string.IsNullOrWhiteSpace(reply))
             return;
 
+        // 如果已包含输出标签，不干预
         if (HasOutputTag(reply))
             return;
 
+        // 确定正确的输出标签 - 从ChatHistory最后一条用户消息中提取type和targetId
         string source = _currentOutputSource ?? DetectLastInputSource();
-        string tagOpen = GetExpectedTagOpen(source);
-        string tagClose = GetExpectedTagClose(source);
+        
+        // 尝试从最近用户消息中提取type和targetId
+        string chatType = "Private";
+        string chatTargetId = "10466671";
+        for (int i = ChatHistory.Count - 1; i >= 0; i--)
+        {
+            if (ChatHistory[i].Role == AuthorRole.User && ChatHistory[i].Content != null)
+            {
+                var userMsg = ChatHistory[i].Content;
+                if (userMsg.Contains("[QQ群]"))
+                {
+                    chatType = "Group";
+                    var match = Regex.Match(userMsg, @"\[(\d+)\]");
+                    if (match.Success) chatTargetId = match.Groups[1].Value;
+                }
+                else if (userMsg.Contains("[QQ私聊]"))
+                {
+                    chatType = "Private";
+                    var match = Regex.Match(userMsg, @"\[(\d+)\]");
+                    if (match.Success) chatTargetId = match.Groups[1].Value;
+                }
+                break;
+            }
+        }
+        
+        string tagOpen = $"<qchat type=\"{chatType}\" targetid=\"{chatTargetId}\">";
+        string tagClose = $"</qchat>";
 
         if (string.IsNullOrEmpty(tagOpen))
             return;
 
         string patched = $"{tagOpen}{reply}{tagClose}";
 
+        // 更新 ChatHistory 为带标签的版本
         for (int i = ChatHistory.Count - 1; i >= 0; i--)
         {
             if (ChatHistory[i].Role == AuthorRole.Assistant)
@@ -189,6 +231,10 @@ public class OutputTagAutoPatcherService(
 
         _executor.Feed(patched);
     }
+
+    #endregion
+
+    #region 检测逻辑
 
     string DetectInputSource(string message)
     {
@@ -226,24 +272,9 @@ public class OutputTagAutoPatcherService(
         return OutputTagRegex.IsMatch(text);
     }
 
-    string GetExpectedTagOpen(string source)
-    {
-        return source switch
-        {
-            "qq_voice" => "<qchat voice=true>",
-            "qq_text" => "<qchat>",
-            "desktop_speech" => "<speak>",
-            "desktop_text" => "<qchat>",
-            _ => "<qchat>",
-        };
-    }
+    #endregion
 
-    string GetExpectedTagClose(string source)
-    {
-        string tag = GetExpectedTagOpen(source).Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
-        string name = tag.Trim('<', '>').Split(' ')[0];
-        return $"</{name}>";
-    }
+    #region AI 可调用的函数
 
     [XmlFunction(FunctionMode.OneShot)]
     [Description("查看输出标签自动补全插件的状态和当前配置")]
@@ -258,4 +289,6 @@ public class OutputTagAutoPatcherService(
             - 输出标签: qchat (QQ消息), qchat voice=true (QQ语音), speak (桌面语音)
             """;
     }
+
+    #endregion
 }
