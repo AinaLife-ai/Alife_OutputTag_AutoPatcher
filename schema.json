@@ -1,3 +1,20 @@
 {
-    "note": "此文件仅用于 KiraAI 插件版本。Alife 版本配置见 OutputTagPatcherService.cs 中的常量定义。"
+    "EnableDetection": {
+        "name": "启用输入源检测",
+        "type": "boolean",
+        "default": true,
+        "hint": "是否自动检测输入来源并注入标签提示"
+    },
+    "ForcePatch": {
+        "name": "强制补全模式",
+        "type": "boolean",
+        "default": true,
+        "hint": "是否强制补全缺失的输出标签"
+    },
+    "DebugLog": {
+        "name": "调试日志",
+        "type": "boolean",
+        "default": false,
+        "hint": "是否在控制台输出检测日志"
+    }
 }
