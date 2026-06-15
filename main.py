@@ -1,2 +1,2 @@
-# 此文件已废弃，替换为 Alife C# Function 实现
-# 请查看 src/Alife.Function.OutputTagPatcher/ 目录
+# 此文件已废弃，请查看 OutputTagAutoPatcherService.cs
+# This plugin is now a C# Alife Function. See OutputTagAutoPatcherService.cs
