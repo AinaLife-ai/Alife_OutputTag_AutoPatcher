@@ -1,10 +1,15 @@
+using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Alife.Framework;
 using Alife.Function.FunctionCaller;
 using Alife.Function.Interpreter;
 using Microsoft.Extensions.Logging;
+using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace Alife.Function.OutputTagAutoPatcher;
