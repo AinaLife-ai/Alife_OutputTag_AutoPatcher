@@ -1,7 +1,1 @@
-{
-    "id": "Alife.Function.OutputTagAutoPatcher",
-    "version": "1.0.0",
-    "author": "AinaLife-ai",
-    "description": "自动检测输入来源，注入标签使用提示，引导AI正确使用 qchat/speak 输出标签。",
-    "type": "function"
-}
+{}
