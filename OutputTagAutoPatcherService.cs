@@ -30,7 +30,6 @@ public class OutputTagAutoPatcherConfig
 
 /// <summary>
 /// 自动检测输入来源并补全 qchat/speak 输出标签。
-/// 原作者：银月 (QQ 2141951927) | 维护：爱奈丽
 ///
 /// 两种模式互补：
 /// 1. 注入提示（ChatSend）：在 LLM 处理前注入标签使用提示，引导AI正确输出
@@ -42,7 +41,7 @@ public class OutputTagAutoPatcherConfig
     模式1：在ChatSend阶段注入标签使用提示词，引导AI正确输出。
     模式2：在ChatOver阶段检测AI回复是否缺少输出标签，若缺失则直接通过XmlFunctionCaller的executor补发带标签文本，无需LLM重新处理。
     """,
-    defaultCategory: "用户自制/标签补全",
+    defaultCategory: "用户自制/输出标签",
     LaunchOrder = -50)]
 public class OutputTagAutoPatcherService(
     XmlFunctionCaller functionService,
@@ -189,8 +188,6 @@ public class OutputTagAutoPatcherService(
         string patched = $"{tagOpen}{reply}{tagClose}";
 
         // 更新 ChatHistory 为带标签的版本
-        // 注意：此时如果UI已经渲染了原始文本，它不会刷新
-        // 但后续对话的上下文使用的是带标签的文本，保证连贯性
         for (int i = ChatHistory.Count - 1; i >= 0; i--)
         {
             if (ChatHistory[i].Role == AuthorRole.Assistant)
@@ -203,11 +200,6 @@ public class OutputTagAutoPatcherService(
         if (Configuration?.DebugLog == true)
             logger.LogInformation("[后处理] 补标并直接执行: {Tag}", tagOpen);
 
-        // 直接喂给executor，不经过LLM
-        // 此时原始文本已在executor的buffer里（通过ChatReceived流式喂入）
-        // 但原始文本不含输出标签，Flush时会被丢弃
-        // 而我们喂入的带标签文本会触发对应的输出函数（QChat/Speak）
-        // OnChatSent的Flush + WaitToInactive会处理我们的修正文本
         _executor.Feed(patched);
     }
 
