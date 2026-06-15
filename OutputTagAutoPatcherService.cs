@@ -1,7 +1,3 @@
-// 贡献者：银月 (QQ: 2141951927)
-// 修复了后处理补标时缺少 type/targetId 参数的问题
-// 以及爱奈丽版本中的诸多细节优化
-
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -138,18 +134,44 @@ public class OutputTagAutoPatcherService(
         if (!(Configuration?.EnableDetection ?? true))
             return message;
 
-        string inputSource = DetectInputSource(message);
-        _currentOutputSource = inputSource;
+        // 检查消息是否已包含带参数的qchat标签，如果已有则跳过
+        if (System.Text.RegularExpressions.Regex.IsMatch(message, @"<qchat\s+type="))
+            return message;
 
-        // 注入场景提示词
-        if (!string.IsNullOrEmpty(inputSource) &&
-            Configuration?.InputSourceMap?.TryGetValue(inputSource, out var hint) == true &&
-            !string.IsNullOrEmpty(hint))
+        // 如果消息不带qchat标签或只有裸标签，则触发补标
+        if (!message.TrimStart().StartsWith("<qchat"))
         {
-            return $"{message}\n\n{hint}";
+            // 裸发消息 - 从最近用户消息回溯来源
+            string chatType = "Private";
+            string chatTargetId = "10466671";
+            for (int i = ChatHistory.Count - 1; i >= 0; i--)
+            {
+                var userMsg = ChatHistory[i].Content;
+                var privateMatch = System.Text.RegularExpressions.Regex.Match(userMsg, @"\[私聊\]\[(\d+)\]");
+                var groupMatch = System.Text.RegularExpressions.Regex.Match(userMsg, @"\[群聊\]\[(\d+)\]");
+                if (groupMatch.Success) { chatType = "Group"; chatTargetId = groupMatch.Groups[1].Value; break; }
+                if (privateMatch.Success) { chatType = "Private"; chatTargetId = privateMatch.Groups[1].Value; break; }
+            }
+            return $"<qchat type=\"{chatType}\" targetid=\"{chatTargetId}\">{message}</qchat>";
         }
-
-        return message;
+        else
+        {
+            // 裸<qchat>标签 - 补上type和targetId
+            string chatType = "Private";
+            string chatTargetId = "10466671";
+            for (int i = ChatHistory.Count - 1; i >= 0; i--)
+            {
+                var userMsg = ChatHistory[i].Content;
+                var privateMatch = System.Text.RegularExpressions.Regex.Match(userMsg, @"\[私聊\]\[(\d+)\]");
+                var groupMatch = System.Text.RegularExpressions.Regex.Match(userMsg, @"\[群聊\]\[(\d+)\]");
+                if (groupMatch.Success) { chatType = "Group"; chatTargetId = groupMatch.Groups[1].Value; break; }
+                if (privateMatch.Success) { chatType = "Private"; chatTargetId = privateMatch.Groups[1].Value; break; }
+            }
+            // 提取内容并重新包装
+            var match = System.Text.RegularExpressions.Regex.Match(message, @"<qchat[^>]*>(.*)</qchat>");
+            string inner = match.Success ? match.Groups[1].Value : message;
+            return $"<qchat type=\"{chatType}\" targetid=\"{chatTargetId}\">{inner}</qchat>";
+        }
     }
 
     #endregion
@@ -195,13 +217,14 @@ public class OutputTagAutoPatcherService(
                 if (userMsg.Contains("[QQ群]"))
                 {
                     chatType = "Group";
-                    var match = Regex.Match(userMsg, @"\[(\d+)\]");
+                    // 尝试提取群号
+                    var match = System.Text.RegularExpressions.Regex.Match(userMsg, @"\[(\d+)\]");
                     if (match.Success) chatTargetId = match.Groups[1].Value;
                 }
                 else if (userMsg.Contains("[QQ私聊]"))
                 {
                     chatType = "Private";
-                    var match = Regex.Match(userMsg, @"\[(\d+)\]");
+                    var match = System.Text.RegularExpressions.Regex.Match(userMsg, @"\[(\d+)\]");
                     if (match.Success) chatTargetId = match.Groups[1].Value;
                 }
                 break;
@@ -217,6 +240,8 @@ public class OutputTagAutoPatcherService(
         string patched = $"{tagOpen}{reply}{tagClose}";
 
         // 更新 ChatHistory 为带标签的版本
+        // 注意：此时如果UI已经渲染了原始文本，它不会刷新
+        // 但后续对话的上下文使用的是带标签的文本，保证连贯性
         for (int i = ChatHistory.Count - 1; i >= 0; i--)
         {
             if (ChatHistory[i].Role == AuthorRole.Assistant)
@@ -229,6 +254,11 @@ public class OutputTagAutoPatcherService(
         if (Configuration?.DebugLog == true)
             logger.LogInformation("[后处理] 补标并直接执行: {Tag}", tagOpen);
 
+        // 直接喂给executor，不经过LLM
+        // 此时原始文本已在executor的buffer里（通过ChatReceived流式喂入）
+        // 但原始文本不含输出标签，Flush时会被丢弃
+        // 而我们喂入的带标签文本会触发对应的输出函数（QChat/Speak）
+        // OnChatSent的Flush + WaitToInactive会处理我们的修正文本
         _executor.Feed(patched);
     }
 
@@ -270,6 +300,25 @@ public class OutputTagAutoPatcherService(
     bool HasOutputTag(string text)
     {
         return OutputTagRegex.IsMatch(text);
+    }
+
+    string GetExpectedTagOpen(string source)
+    {
+        return source switch
+        {
+            "qq_voice" => "<qchat voice=true>",
+            "qq_text" => "<qchat>",
+            "desktop_speech" => "<speak>",
+            "desktop_text" => "<qchat>",
+            _ => "<qchat>",
+        };
+    }
+
+    string GetExpectedTagClose(string source)
+    {
+        string tag = GetExpectedTagOpen(source).Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+        string name = tag.Trim('<', '>').Split(' ')[0];
+        return $"</{name}>";
     }
 
     #endregion
