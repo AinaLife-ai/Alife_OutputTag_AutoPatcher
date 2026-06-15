@@ -1,13 +1,7 @@
 {
-    "id": "output_tag_patcher",
-    "name": "Output Tag 自动补全",
+    "id": "Alife.Function.OutputTagAutoPatcher",
+    "version": "1.0.0",
     "author": "AinaLife-ai",
-    "description": "自动检测输入来源，补全 qchat/speak 输出标签。根据输入渠道自动决定输出方式：QQ文字→qchat、QQ语音→qchat voice=true、桌面语音→speak。",
-    "releases": {
-        "1.0.0": {
-            "date": "2026-06-15",
-            "note": "初始版本。实现输入源检测 + prompt 上下文注入 + 输出后处理强制补全",
-            "file": ""
-        }
-    }
+    "description": "自动检测输入来源，注入标签使用提示，引导AI正确使用 qchat/speak 输出标签。",
+    "type": "function"
 }
