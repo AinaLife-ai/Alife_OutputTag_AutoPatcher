@@ -54,6 +54,12 @@ AI 输出完成后，检测到回复中缺失输出标签时：
 - DebugLog: 调试日志（默认 false）
 - InputSourceMap: 各输入来源的注入提示文本
 
+## 致谢
+
+- 感谢 [Alife](https://github.com/BDFFZI/Alife) 开发者 [半点星光](https://github.com/BDFFZI) 提供的框架支持和机会
+- 感谢 [初心](https://github.com/ChuXinCode) 群友提供的 1.0 版 Alife 插件作为重要参考
+- 感谢周武全程指导
+
 ## License
 
 AGPL-3.0
