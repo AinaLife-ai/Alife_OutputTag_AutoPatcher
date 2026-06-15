@@ -1,13 +1,1 @@
-{
-    "$schema": "https://raw.githubusercontent.com/BDFFZI/Alife/master/sources/Alife.Function/plugin-schema.json",
-    "EnableDetection": {
-        "type": "boolean",
-        "default": true,
-        "hint": "启用输入源检测"
-    },
-    "DebugLog": {
-        "type": "boolean",
-        "default": false,
-        "hint": "调试日志"
-    }
-}
+{}
