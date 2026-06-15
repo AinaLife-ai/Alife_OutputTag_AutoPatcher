@@ -1,68 +1,54 @@
-# Alife Output Tag AutoPatcher
+# Alife Function - OutputTagAutoPatcher
 
-自动检测输入来源，补全 `qchat` / `speak` 输出标签的 Alife 插件。
+自动检测输入来源并补全 `qchat` / `speak` 输出标签的 Alife 插件。
 
 ## 解决的问题
 
 Alife 数字生命在不同输入渠道（QQ文字、QQ语音、桌面语音）之间切换时，AI 经常：
 - **忘记加输出标签** → 消息发不出去
-- **加错标签** → 语音输入却用文字回复，反之亦然
-- **多轮对话中输出渠道不稳定** → 上下文混乱
+- **加错标签** → 语音输入却用文字回复
+- **多轮对话中输出标签混乱**
 
-本插件自动检测输入来源，在 LLM 输出阶段补全/纠正输出标签。
+本 Function 在 LLM 处理消息前自动检测输入来源，注入标签使用提示，引导 AI 使用正确的输出标签。
 
 ## 工作原理
 
 ```
-QQ文字消息 ──→ 检测输入源(qq_text)    ──→ 自动补全 <qchat> 标签
-QQ语音消息 ──→ 检测输入源(qq_voice)   ──→ 自动补全 <qchat voice=true> 标签
-桌面语音输入 ──→ 检测输入源(desktop_speech) ──→ 自动补全 <speak> 标签
+QQ文字消息 ──→ OnChatSend检测(qq_text) ──→ 注入提示：默认使用 <qchat>
+QQ语音消息 ──→ OnChatSend检测(qq_voice) ──→ 注入提示：用 <qchat voice=true>
+桌面语音输入 ──→ OnChatSend检测(desktop_speech) ──→ 注入提示：用 <speak>
 ```
 
 ### 检测逻辑
 
-1. **QQ 消息特征**: `[CQ:` 或 `qq:` 前缀
-2. **语音标记**: `[语音]`、`[voice]`、`record`、`语音消息`
-3. **桌面语音**: `<speak` 前缀、`speak:`、`说:`
+| 输入特征 | 识别为 | 注入提示 |
+|---------|--------|---------|
+| 消息含 `[QQ]` 或 `QQ消息` | `qq_text` | 默认使用 `<qchat>` |
+| 消息含 `[QQ]` + 语音关键词 | `qq_voice` | 使用 `<qchat voice=true>` |
+| 消息含 `[Desktop]` 或 `桌面` + 语音关键词 | `desktop_speech` | 使用 `<speak>` |
+| 仅含语音关键词 | `desktop_speech` | 使用 `<speak>` |
 
-### 标签补全策略
-
-| 输入源 | 期望输出标签 | 说明 |
-|--------|------------|------|
-| `qq_text` | `<qchat>` | QQ文字消息 → 文字回复 |
-| `qq_voice` | `<qchat voice=true>` | QQ语音消息 → 语音回复 |
-| `desktop_speech` | `<speak>` | 桌面端语音 → 语音回复 |
-| `desktop_text` | `<qchat>` | 桌面端文字 → 文字回复 |
-
-## 项目结构
-
-```
-src/Alife.Function.OutputTagPatcher/
-├── Alife.Function.OutputTagPatcher.csproj  # 项目文件
-└── OutputTagPatcherService.cs               # 核心实现
-```
-
-## 构建
-
-```bash
-cd src/Alife.Function.OutputTagPatcher
-dotnet build
-```
-
-构建产物为 `bin/Debug/net8.0/Alife.Function.OutputTagPatcher.dll`。
+语音关键词：`[语音]`, `[voice]`, `record`, `语音消息`, `speak:`
 
 ## 安装
 
-1. 将编译后的 DLL 放入 Alife 的插件目录
-2. 或在 Alife 插件市场搜索 "Output Tag 自动补全" 安装
-3. 重启 Alife 桌宠
+1. 将 `Alife.Function.OutputTagAutoPatcher` 文件夹放入 Alife 的 `sources/Alife.Function/` 目录
+2. 在 Alife 配置中启用「输出标签自动补全」模块
+3. 重启 Alife
 
-## 项目参考
+## 依赖
 
-本项目的实现参考了 Alife 官方模块：
-- `Alife.Function.QChat` — QQ 消息收发与语音标志
-- `Alife.Function.Speech` — 桌面语音合成与播放
-- `Alife.Function.FunctionCaller` — XML 函数调用框架
+- Alife.Framework
+- Alife.Function.FunctionCaller
+
+## 配置
+
+| 配置项 | 类型 | 默认 | 说明 |
+|--------|------|------|------|
+| `EnableDetection` | bool | `true` | 启用输入源检测 |
+| `ForcePatch` | bool | `true` | 强制补全模式 |
+| `DebugLog` | bool | `false` | 调试日志 |
+| `InputSourceMap` | dict | 见代码 | 自定义输入源→提示映射 |
 
 ## License
 
