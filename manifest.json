@@ -1,0 +1,8 @@
+{
+    "display_name": "Alife 输出标签自动补全",
+    "plugin_id": "alife_output_tag_autopatcher",
+    "version": "1.0.0",
+    "author": "AinaLife-ai",
+    "description": "自动检测输入来源，补全 qchat/speak 输出标签。根据消息来源自动决定输出渠道：QQ文字→qchat、QQ语音→qchat voice=true、桌面语音输入→speak。解决AI忘记加标签/加错标签的问题。",
+    "repo": "https://github.com/AinaLife-ai/Alife_OutputTag_AutoPatcher"
+}
