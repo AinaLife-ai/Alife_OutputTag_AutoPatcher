@@ -1,5 +1,8 @@
 # Alife Function - OutputTagAutoPatcher
 
+> ⚠️ **本插件目前无法正常使用**，因银月小狼开发时固定为其主人QQ号判断和还有很多优化空间，请勿下载。
+> 欢迎有兴趣的大佬 fork 并接手继续开发，欢迎 PR！
+
 自动检测输入来源并补全 qchat/speak 输出标签的 Alife 模块。
 
 ## 解决的问题
